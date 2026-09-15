@@ -34,7 +34,8 @@ import org.springframework.util.Assert;
  * @since 4.1
  * @see HandlerMethodMessageListenerAdapter
  */
-public class MethodRedisListenerEndpoint extends AbstractRedisListenerEndpoint {
+public class MethodRedisListenerEndpoint extends AbstractRedisListenerEndpoint
+		implements MessageHandlerMethodFactoryAware {
 
 	private final Object bean;
 
@@ -95,10 +96,10 @@ public class MethodRedisListenerEndpoint extends AbstractRedisListenerEndpoint {
 	 * Set the {@link MessageHandlerMethodFactory} to use to build the {@link InvocableHandlerMethod} responsible to
 	 * manage the invocation of this endpoint.
 	 */
+	@Override
 	public void setMessageHandlerMethodFactory(MessageHandlerMethodFactory messageHandlerMethodFactory) {
 		this.messageHandlerMethodFactory = messageHandlerMethodFactory;
 	}
-
 
 	@Override
 	public HandlerMethodMessageListenerAdapter createListener() {
@@ -107,8 +108,7 @@ public class MethodRedisListenerEndpoint extends AbstractRedisListenerEndpoint {
 		InvocableHandlerMethod invocableHandlerMethod = this.messageHandlerMethodFactory
 				.createInvocableHandlerMethod(this.bean, this.method);
 
-		return new HandlerMethodMessageListenerAdapter(invocableHandlerMethod,
-				this.consumes);
+		return new HandlerMethodMessageListenerAdapter(invocableHandlerMethod, this.consumes);
 	}
 
 	/**

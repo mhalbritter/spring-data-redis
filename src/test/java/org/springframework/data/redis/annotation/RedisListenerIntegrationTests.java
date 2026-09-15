@@ -16,7 +16,9 @@
 package org.springframework.data.redis.annotation;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.awaitility.Awaitility.*;
 
+import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -29,10 +31,10 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.config.RedisListenerConfigUtils;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.SubscriptionListener;
 import org.springframework.data.redis.connection.jedis.JedisConnectionFactory;
 import org.springframework.data.redis.connection.jedis.extension.JedisConnectionFactoryExtension;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
@@ -74,26 +76,12 @@ public class RedisListenerIntegrationTests {
 	@Test // GH-1004
 	void shouldListenForMessage() throws InterruptedException {
 
-		context.registerBean(RedisListenerConfigUtils.REDIS_MESSAGE_LISTENER_BEAN_NAME, RedisMessageListenerContainer.class,
-				() -> {
-
-			RedisMessageListenerContainer container = new RedisMessageListenerContainer();
-			container.setRecoveryInterval(100);
-			container.setConnectionFactory(connectionFactory);
-			return container;
-		});
-
-		context.register(Config.class);
-		context.refresh();
-
-		StringRedisTemplate template = new StringRedisTemplate();
-		template.setConnectionFactory(connectionFactory);
-		template.afterPropertiesSet();
+		startContext(Config.class, MyListener.class);
 
 		MyListener bean = context.getBean(MyListener.class);
 		bean.message.clear();
 
-		template.convertAndSend("my-channel-listener", "Hello Redis!");
+		template().convertAndSend("my-channel-listener", "Hello Redis!");
 
 		String message = bean.message.poll(10, TimeUnit.SECONDS);
 		assertThat(message).isEqualTo("Hello Redis!");
@@ -104,14 +92,62 @@ public class RedisListenerIntegrationTests {
 		context.stop();
 	}
 
+	@Test
+	void oneSubscriptionPerInstance() throws InterruptedException {
+
+		startContext(Config.class, SubscriptionAwareListener.class);
+
+		SubscriptionAwareListener bean = context.getBean(SubscriptionAwareListener.class);
+
+		assertThat(bean.subscribedChannel.poll(10, TimeUnit.SECONDS)).isEqualTo("my-subscription-channel");
+
+		Thread.sleep(1000);
+		// only this bean listens on the channel: no further confirmation is re-sent
+		await().during(Duration.ofMillis(500)).atMost(Duration.ofSeconds(2)).until(() -> bean.subscribedChannel.isEmpty());
+	}
+
+	@Test // GH-3439
+	void oneSubscriptionPerInstanceAfterRestart() throws InterruptedException {
+
+		startContext(Config.class, SubscriptionAwareListener.class);
+
+		SubscriptionAwareListener bean = context.getBean(SubscriptionAwareListener.class);
+		assertThat(bean.subscribedChannel.poll(10, TimeUnit.SECONDS)).isEqualTo("my-subscription-channel");
+
+		context.stop();
+		context.start();
+
+		assertThat(bean.subscribedChannel.poll(10, TimeUnit.SECONDS)).isEqualTo("my-subscription-channel");
+		await().during(Duration.ofSeconds(1)).atMost(Duration.ofSeconds(2)).until(() -> bean.subscribedChannel.isEmpty());
+	}
+
+	private void startContext(Class<?>... componentClasses) {
+
+		context.registerBean(RedisListenerConfigUtils.REDIS_MESSAGE_LISTENER_BEAN_NAME, RedisMessageListenerContainer.class,
+				() -> {
+
+			RedisMessageListenerContainer container = new RedisMessageListenerContainer();
+			container.setRecoveryInterval(100);
+			container.setConnectionFactory(connectionFactory);
+			return container;
+		});
+
+		context.register(componentClasses);
+		context.refresh();
+	}
+
+	private StringRedisTemplate template() {
+
+		StringRedisTemplate template = new StringRedisTemplate();
+		template.setConnectionFactory(connectionFactory);
+		template.afterPropertiesSet();
+		return template;
+	}
+
 	@Configuration
 	@EnableRedisListeners
 	static class Config {
 
-		@Bean
-		MyListener myListener() {
-			return new MyListener();
-		}
 	}
 
 	static class MyListener {
@@ -123,6 +159,41 @@ public class RedisListenerIntegrationTests {
 			message.offer(msg);
 		}
 
+	}
+
+	static class SubscriptionAwareListener implements SubscriptionListener {
+
+		LinkedBlockingQueue<String> subscribedChannel = new LinkedBlockingQueue<>();
+
+		@RedisListener("my-subscription-channel")
+		void a(String msg) {}
+
+		@RedisListener("my-subscription-channel")
+		void b(String msg) {}
+
+		@Override
+		public void onChannelSubscribed(byte[] channel, long count) {
+			System.out.println(Thread.currentThread().getName() + " onChannelSubscribed");
+			subscribedChannel.offer(new String(channel));
+		}
+
+		@Override
+		public void onChannelUnsubscribed(byte[] channel, long count) {
+			System.out.println(Thread.currentThread().getName() + " onChannelUnsubscribed");
+			SubscriptionListener.super.onChannelUnsubscribed(channel, count);
+		}
+
+		@Override
+		public void onPatternSubscribed(byte[] pattern, long count) {
+			System.out.println(Thread.currentThread().getName() + " onPatternSubscribed");
+			SubscriptionListener.super.onPatternSubscribed(pattern, count);
+		}
+
+		@Override
+		public void onPatternUnsubscribed(byte[] pattern, long count) {
+			System.out.println(Thread.currentThread().getName() + " onPatternUnsubscribed");
+			SubscriptionListener.super.onPatternUnsubscribed(pattern, count);
+		}
 	}
 
 }
