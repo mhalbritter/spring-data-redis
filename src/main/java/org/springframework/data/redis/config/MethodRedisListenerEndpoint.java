@@ -21,6 +21,7 @@ import org.jspecify.annotations.Nullable;
 
 import org.springframework.aop.framework.AopProxyUtils;
 import org.springframework.aop.support.AopUtils;
+import org.springframework.data.redis.connection.DelegatingSubscriptionListener;
 import org.springframework.data.redis.connection.SubscriptionListener;
 import org.springframework.data.redis.listener.adapter.HandlerMethodMessageListenerAdapter;
 import org.springframework.messaging.handler.annotation.support.MessageHandlerMethodFactory;
@@ -132,7 +133,7 @@ public class MethodRedisListenerEndpoint extends AbstractRedisListenerEndpoint {
 	 * {@link SubscriptionListener}.
 	 */
 	private static final class SubscriptionAwareListenerAdapter extends HandlerMethodMessageListenerAdapter
-			implements SubscriptionListener {
+			implements DelegatingSubscriptionListener {
 
 		private final SubscriptionListener delegate;
 
@@ -141,6 +142,11 @@ public class MethodRedisListenerEndpoint extends AbstractRedisListenerEndpoint {
 
 			super(handlerMethod, consumes);
 			this.delegate = delegate;
+		}
+
+		@Override
+		public SubscriptionListener getSubscriptionTarget() {
+			return this.delegate;
 		}
 
 		@Override

@@ -18,6 +18,7 @@ package org.springframework.data.redis.listener;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -51,6 +52,7 @@ import org.springframework.core.task.TaskExecutor;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.connection.ConnectionUtils;
+import org.springframework.data.redis.connection.DelegatingSubscriptionListener;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.connection.RedisConnection;
@@ -985,17 +987,38 @@ public class RedisMessageListenerContainer implements InitializingBean, Disposab
 	private void dispatchSubscriptionNotification(Collection<MessageListener> listeners, byte[] pattern, long count,
 			SubscriptionConsumer listenerConsumer) {
 
-		if (!CollectionUtils.isEmpty(listeners)) {
-
-			byte[] source = pattern.clone();
-			Executor executor = getRequiredTaskExecutor();
-
-			for (MessageListener messageListener : listeners) {
-				if (messageListener instanceof SubscriptionListener subscriptionListener) {
-					executor.execute(() -> listenerConsumer.accept(subscriptionListener, source, count));
-				}
-			}
+		if (CollectionUtils.isEmpty(listeners)) {
+			return;
 		}
+
+		byte[] source = pattern.clone();
+		Executor executor = getRequiredTaskExecutor();
+
+		// Several listeners of a topic can forward notifications to the same target (e.g. two annotated methods of the
+		// same bean listening to one topic). Notify each target only once.
+		Set<SubscriptionListener> notified = Collections.newSetFromMap(new IdentityHashMap<>());
+
+		for (MessageListener messageListener : listeners) {
+
+			if (!(messageListener instanceof SubscriptionListener subscriptionListener)) {
+				continue;
+			}
+
+			if (!notified.add(getSubscriptionTarget(subscriptionListener))) {
+				continue;
+			}
+
+			executor.execute(() -> listenerConsumer.accept(subscriptionListener, source, count));
+		}
+	}
+
+	private static SubscriptionListener getSubscriptionTarget(SubscriptionListener listener) {
+
+		if (listener instanceof DelegatingSubscriptionListener delegating) {
+			return delegating.getSubscriptionTarget();
+		}
+
+		return listener;
 	}
 
 	private void dispatchMessage(Collection<MessageListener> listeners, Message message, byte @Nullable [] pattern) {
