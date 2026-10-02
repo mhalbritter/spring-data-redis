@@ -16,15 +16,22 @@
 package org.springframework.data.redis.config;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 import java.lang.reflect.Method;
+import java.util.Set;
 
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import org.springframework.data.redis.connection.Message;
+import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.connection.SubscriptionListener;
+import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.messaging.handler.annotation.support.DefaultMessageHandlerMethodFactory;
 
@@ -39,13 +46,33 @@ class SubscriptionListenerRegistryUnitTests {
 	@Mock RedisMessageListenerContainer container;
 
 	@Test // GH-3439
-	void shouldDeferTopicValidationToStart() throws NoSuchMethodException {
+	void shouldResolveTopicsOnStart() throws NoSuchMethodException {
 
 		SubscriptionListenerRegistry registry = new SubscriptionListenerRegistry();
 		MethodRedisListenerEndpoint endpoint = endpointWithoutTopic();
 
 		assertThatNoException().isThrownBy(() -> registry.registerListener(endpoint, this.container));
-		assertThatIllegalArgumentException().isThrownBy(registry::start).withMessageContaining("Topic");
+
+		// topic set after registration is picked up by the forwarder
+		endpoint.setTopic("my-channel");
+		registry.start();
+
+		verify(this.container).addMessageListener(argThat(SubscriptionListener.class::isInstance),
+				eq(Set.of(new ChannelTopic("my-channel"))));
+	}
+
+	@Test // GH-3439
+	void shouldNotForwardForProgrammaticEndpoints() {
+
+		SubscriptionListenerRegistry registry = new SubscriptionListenerRegistry();
+		SimpleRedisListenerEndpoint endpoint = new SimpleRedisListenerEndpoint(new SubscriptionAwareMessageListener());
+		endpoint.setTopic("my-channel");
+
+		registry.registerListener(endpoint, this.container);
+		registry.start();
+
+		verify(this.container).addMessageListener(any(SubscriptionAwareMessageListener.class), any(ChannelTopic.class));
+		verify(this.container, never()).addMessageListener(any(), anyCollection());
 	}
 
 	private static MethodRedisListenerEndpoint endpointWithoutTopic() throws NoSuchMethodException {
@@ -63,6 +90,13 @@ class SubscriptionListenerRegistryUnitTests {
 	static class SubscriptionAwareService implements SubscriptionListener {
 
 		public void handle(String message) {}
+
+	}
+
+	static class SubscriptionAwareMessageListener implements MessageListener, SubscriptionListener {
+
+		@Override
+		public void onMessage(Message message, byte @Nullable [] pattern) {}
 
 	}
 

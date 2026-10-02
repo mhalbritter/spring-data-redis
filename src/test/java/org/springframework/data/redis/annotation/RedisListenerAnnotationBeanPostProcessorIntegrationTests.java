@@ -184,7 +184,7 @@ class RedisListenerAnnotationBeanPostProcessorIntegrationTests {
 		}, DefaultConfig.class, SubscriptionAwareService.class);
 	}
 
-	@Test
+	@Test // GH-3439
 	void configurerCanOptOutOfSubscriptionNotifications() {
 
 		doWithContext(context -> {

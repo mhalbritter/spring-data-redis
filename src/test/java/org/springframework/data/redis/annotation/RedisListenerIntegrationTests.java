@@ -92,7 +92,7 @@ public class RedisListenerIntegrationTests {
 		context.stop();
 	}
 
-	@Test
+	@Test // GH-3439
 	void oneSubscriptionPerInstance() throws InterruptedException {
 
 		startContext(Config.class, SubscriptionAwareListener.class);
@@ -101,9 +101,48 @@ public class RedisListenerIntegrationTests {
 
 		assertThat(bean.subscribedChannel.poll(10, TimeUnit.SECONDS)).isEqualTo("my-subscription-channel");
 
-		Thread.sleep(1000);
 		// only this bean listens on the channel: no further confirmation is re-sent
-		await().during(Duration.ofMillis(500)).atMost(Duration.ofSeconds(2)).until(() -> bean.subscribedChannel.isEmpty());
+		await().during(Duration.ofSeconds(1)).atMost(Duration.ofSeconds(2)).until(() -> bean.subscribedChannel.isEmpty());
+	}
+
+	@Test // GH-3439
+	void oneSubscriptionPerChannel() throws InterruptedException {
+
+		startContext(Config.class, MultiChannelListener.class);
+
+		MultiChannelListener bean = context.getBean(MultiChannelListener.class);
+
+		assertThat(List.of(poll(bean.subscribedChannel), poll(bean.subscribedChannel)))
+				.containsExactlyInAnyOrder("my-channel-1", "my-channel-2");
+		await().during(Duration.ofSeconds(1)).atMost(Duration.ofSeconds(2)).until(() -> bean.subscribedChannel.isEmpty());
+	}
+
+	@Test // GH-3439
+	void oneSubscriptionPerPattern() throws InterruptedException {
+
+		startContext(Config.class, PatternListener.class);
+
+		PatternListener bean = context.getBean(PatternListener.class);
+
+		assertThat(poll(bean.subscribedPattern)).isEqualTo("my-pattern-*");
+		await().during(Duration.ofSeconds(1)).atMost(Duration.ofSeconds(2)).until(() -> bean.subscribedPattern.isEmpty());
+	}
+
+	@Test // GH-3439
+	void notifiesAgainWhenAnotherBeanSubscribes() throws InterruptedException {
+
+		startContext(Config.class, FirstListener.class, SecondListener.class);
+
+		FirstListener first = context.getBean(FirstListener.class);
+		SecondListener second = context.getBean(SecondListener.class);
+
+		// the second bean's SUBSCRIBE is confirmed to both beans
+		assertThat(poll(first.subscribedChannel)).isEqualTo("my-shared-channel");
+		assertThat(poll(first.subscribedChannel)).isEqualTo("my-shared-channel");
+		assertThat(poll(second.subscribedChannel)).isEqualTo("my-shared-channel");
+
+		await().during(Duration.ofSeconds(1)).atMost(Duration.ofSeconds(2))
+				.until(() -> first.subscribedChannel.isEmpty() && second.subscribedChannel.isEmpty());
 	}
 
 	@Test // GH-3439
@@ -136,6 +175,10 @@ public class RedisListenerIntegrationTests {
 		context.refresh();
 	}
 
+	private static String poll(LinkedBlockingQueue<String> queue) throws InterruptedException {
+		return queue.poll(10, TimeUnit.SECONDS);
+	}
+
 	private StringRedisTemplate template() {
 
 		StringRedisTemplate template = new StringRedisTemplate();
@@ -147,7 +190,6 @@ public class RedisListenerIntegrationTests {
 	@Configuration
 	@EnableRedisListeners
 	static class Config {
-
 	}
 
 	static class MyListener {
@@ -173,27 +215,71 @@ public class RedisListenerIntegrationTests {
 
 		@Override
 		public void onChannelSubscribed(byte[] channel, long count) {
-			System.out.println(Thread.currentThread().getName() + " onChannelSubscribed");
 			subscribedChannel.offer(new String(channel));
 		}
 
+	}
+
+	static class MultiChannelListener implements SubscriptionListener {
+
+		LinkedBlockingQueue<String> subscribedChannel = new LinkedBlockingQueue<>();
+
+		@RedisListener("my-channel-1")
+		void a(String msg) {}
+
+		@RedisListener("my-channel-2")
+		void b(String msg) {}
+
 		@Override
-		public void onChannelUnsubscribed(byte[] channel, long count) {
-			System.out.println(Thread.currentThread().getName() + " onChannelUnsubscribed");
-			SubscriptionListener.super.onChannelUnsubscribed(channel, count);
+		public void onChannelSubscribed(byte[] channel, long count) {
+			subscribedChannel.offer(new String(channel));
 		}
+
+	}
+
+	static class PatternListener implements SubscriptionListener {
+
+		LinkedBlockingQueue<String> subscribedPattern = new LinkedBlockingQueue<>();
+
+		@RedisListener("my-pattern-*")
+		void a(String msg) {}
+
+		@RedisListener("my-pattern-*")
+		void b(String msg) {}
 
 		@Override
 		public void onPatternSubscribed(byte[] pattern, long count) {
-			System.out.println(Thread.currentThread().getName() + " onPatternSubscribed");
-			SubscriptionListener.super.onPatternSubscribed(pattern, count);
+			subscribedPattern.offer(new String(pattern));
 		}
 
+	}
+
+	static class FirstListener implements SubscriptionListener {
+
+		LinkedBlockingQueue<String> subscribedChannel = new LinkedBlockingQueue<>();
+
+		@RedisListener("my-shared-channel")
+		void a(String msg) {}
+
 		@Override
-		public void onPatternUnsubscribed(byte[] pattern, long count) {
-			System.out.println(Thread.currentThread().getName() + " onPatternUnsubscribed");
-			SubscriptionListener.super.onPatternUnsubscribed(pattern, count);
+		public void onChannelSubscribed(byte[] channel, long count) {
+			subscribedChannel.offer(new String(channel));
 		}
+
+	}
+
+	static class SecondListener implements SubscriptionListener {
+
+		LinkedBlockingQueue<String> subscribedChannel = new LinkedBlockingQueue<>();
+
+		@RedisListener("my-shared-channel")
+		void a(String msg) {}
+
+		@Override
+		public void onChannelSubscribed(byte[] channel, long count) {
+			subscribedChannel.offer(new String(channel));
+		}
+
 	}
 
 }

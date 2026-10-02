@@ -33,12 +33,12 @@ import org.springframework.beans.factory.BeanFactory;
 import org.springframework.data.redis.config.MethodRedisListenerEndpoint;
 import org.springframework.data.redis.config.RedisListenerConfigUtils;
 import org.springframework.data.redis.config.RedisListenerEndpointRegistry;
-import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.connection.SubscriptionListener;
 import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.data.redis.listener.StringMessage;
 import org.springframework.data.redis.listener.Topic;
+import org.springframework.data.redis.listener.adapter.HandlerMethodMessageListenerAdapter;
 import org.springframework.data.redis.listener.support.PubSubHeaders;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.messaging.handler.annotation.Headers;
@@ -112,7 +112,7 @@ class RedisListenerAnnotationBeanPostProcessorUnitTests {
 		MethodRedisListenerEndpoint endpoint = processor.createEndpoint(method.getAnnotation(RedisListener.class),
 				method, bean);
 
-		MessageListener listener = endpoint.createListener();
+		HandlerMethodMessageListenerAdapter listener = endpoint.createListener();
 
 		listener.onMessage(new StringMessage("test-channel", "hello"), null);
 
@@ -129,7 +129,7 @@ class RedisListenerAnnotationBeanPostProcessorUnitTests {
 		MethodRedisListenerEndpoint endpoint = processor.createEndpoint(method.getAnnotation(RedisListener.class),
 				method, bean);
 
-		MessageListener listener = endpoint.createListener();
+		HandlerMethodMessageListenerAdapter listener = endpoint.createListener();
 
 		listener.onMessage(new StringMessage("test-channel", "hello"), null);
 
@@ -145,7 +145,7 @@ class RedisListenerAnnotationBeanPostProcessorUnitTests {
 		MethodRedisListenerEndpoint endpoint = processor.createEndpoint(method.getAnnotation(RedisListener.class),
 				method, bean);
 
-		MessageListener listener = endpoint.createListener();
+		HandlerMethodMessageListenerAdapter listener = endpoint.createListener();
 
 		listener.onMessage(new StringMessage("test-channel", "hello"), null);
 
@@ -160,7 +160,7 @@ class RedisListenerAnnotationBeanPostProcessorUnitTests {
 	}
 
 	@Test // GH-3439
-	void shouldNotImplementSubscriptionListenerWhenBeanDoes() throws NoSuchMethodException {
+	void endpointListenerShouldNotForwardSubscriptionCallbacks() throws NoSuchMethodException {
 
 		SubscriptionAwareService bean = new SubscriptionAwareService();
 		Method method = SubscriptionAwareService.class.getMethod("handle", String.class);
