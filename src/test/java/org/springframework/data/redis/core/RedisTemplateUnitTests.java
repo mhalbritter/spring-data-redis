@@ -147,7 +147,7 @@ class RedisTemplateUnitTests {
 	@Test // DATAREDIS-988, DATAREDIS-891
 	void transactionAwareTemplateShouldReleaseConnection() {
 
-		template.setEnableTransactionSupport(true);
+		template.setTransactionParticipation(TransactionParticipation.BEGIN_OR_JOIN);
 
 		template.execute(new RedisCallback<Object>() {
 			@Nullable
@@ -162,6 +162,28 @@ class RedisTemplateUnitTests {
 
 		verify(connectionFactoryMock, times(3)).getConnection();
 		verify(redisConnectionMock, times(3)).close();
+	}
+
+	@Test // GH-99999
+	void transactionParticipationDefaultsToJoinExisting() {
+
+		assertThat(template.getTransactionParticipation()).isEqualTo(TransactionParticipation.JOIN_EXISTING);
+
+		executeInTransaction();
+		verify(redisConnectionMock, never()).multi();
+	}
+
+	@Test // GH-99999
+	void enableTransactionSupportMapsToTransactionParticipation() {
+
+		template.setEnableTransactionSupport(true);
+		assertThat(template.getTransactionParticipation()).isEqualTo(TransactionParticipation.BEGIN_OR_JOIN);
+
+		executeInTransaction();
+		verify(redisConnectionMock).multi();
+
+		template.setEnableTransactionSupport(false);
+		assertThat(template.getTransactionParticipation()).isEqualTo(TransactionParticipation.JOIN_EXISTING);
 	}
 
 	@Test // GH-3436
@@ -180,6 +202,20 @@ class RedisTemplateUnitTests {
 		when(keyCommandsMock.unlink(any(byte[].class))).thenReturn(COUNT_OVERFLOWING_INT);
 
 		assertThat(template.unlink("spring")).isFalse();
+	}
+
+	// Runs a no-op callback within a simulated Spring-managed transaction, then cleans up thread-bound state.
+	private void executeInTransaction() {
+
+		TransactionSynchronizationManager.initSynchronization();
+		TransactionSynchronizationManager.setActualTransactionActive(true);
+
+		try {
+			template.execute((RedisCallback<Object>) connection -> null);
+		} finally {
+			TransactionSynchronizationManager.unbindResourceIfPossible(connectionFactoryMock);
+			TransactionSynchronizationManager.clear();
+		}
 	}
 
 	private static class SomeArbitrarySerializableObject implements Serializable {
